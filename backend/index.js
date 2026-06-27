@@ -10,93 +10,79 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.use(cors());
 app.use(express.json());
 
-const waiting = new Map();
+const waiting = [];
 const rooms = new Map();
-let roomId = 0;
-
-function tryMatch(socket) {
-  const me = waiting.get(socket.id);
-  if (!me) return;
-
-  for (const [sid, other] of waiting) {
-    if (sid === socket.id) continue;
-
-    const match = (
-      (!me.mode || !other.mode || me.mode === other.mode) &&
-      (!me.city || !other.city || me.city === other.city) &&
-      (!me.ageFrom || !other.ageTo || me.ageFrom <= other.ageTo) &&
-      (!me.ageTo || !other.ageFrom || me.ageTo >= other.ageFrom)
-    );
-
-    if (match) {
-      roomId++;
-      const rid = `room_${roomId}`;
-      rooms.set(rid, { users: [socket.id, sid], userIds: [me.userId, other.userId], mode: me.mode || other.mode });
-
-      waiting.delete(socket.id);
-      waiting.delete(sid);
-
-      const data = { id: rid, mode: me.mode || other.mode, user1_id: me.userId, user2_id: other.userId };
-      io.to(socket.id).emit("partner_found", data);
-      io.to(sid).emit("partner_found", data);
-      console.log(`Room ${rid}: ${me.userId} <-> ${other.userId}`);
-      return;
-    }
-  }
-}
+const nicks = new Map();
 
 io.on("connection", (socket) => {
-  socket.on("find_partner", (data) => {
-    waiting.set(socket.id, { ...data, socketId: socket.id });
-    tryMatch(socket);
-  });
+  socket.on("chat:find", ({ nickname }) => {
+    const nick = (nickname || `anon_${Math.random().toString(36).slice(2, 8)}`).slice(0, 20);
+    nicks.set(socket.id, nick);
 
-  socket.on("cancel_search", () => {
-    waiting.delete(socket.id);
-  });
+    const partner = waiting.find((s) => s.id !== socket.id);
+    if (partner) {
+      const roomId = `room_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      const idx = waiting.indexOf(partner);
+      if (idx !== -1) waiting.splice(idx, 1);
 
-  socket.on("send_message", ({ roomId, content }) => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    const other = room.users.find((id) => id !== socket.id);
-    if (!other) return;
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const senderIdx = room.users.indexOf(socket.id);
-    const senderId = room.userIds[senderIdx];
-    io.to(socket.id).emit("new_message", { id, content, sender_id: senderId, mine: true });
-    io.to(other).emit("new_message", { id, content, sender_id: senderId, mine: false });
-  });
+      rooms.set(socket.id, partner.id);
+      rooms.set(partner.id, socket.id);
 
-  socket.on("signal", ({ roomId, type, payload }) => {
-    const room = rooms.get(roomId);
-    if (!room) return;
-    const other = room.users.find((id) => id !== socket.id);
-    if (other) io.to(other).emit("signal", { type, payload });
-  });
-
-  socket.on("next", (roomId) => {
-    const room = rooms.get(roomId);
-    if (room) {
-      const other = room.users.find((id) => id !== socket.id);
-      if (other) io.to(other).emit("partner_left");
-      rooms.delete(roomId);
+      io.to(socket.id).emit("chat:paired", { partnerId: partner.id, partnerNickname: nicks.get(partner.id) });
+      io.to(partner.id).emit("chat:paired", { partnerId: socket.id, partnerNickname: nick });
+    } else {
+      waiting.push(socket);
+      socket.emit("chat:waiting");
     }
+  });
+
+  socket.on("chat:cancel", () => {
+    const idx = waiting.indexOf(socket);
+    if (idx !== -1) waiting.splice(idx, 1);
+    socket.emit("chat:cancelled");
+  });
+
+  socket.on("chat:next", () => {
+    const partnerId = rooms.get(socket.id);
+    if (partnerId) {
+      io.to(partnerId).emit("chat:partner_left");
+      rooms.delete(socket.id);
+      rooms.delete(partnerId);
+    }
+    nicks.delete(socket.id);
+    socket.emit("chat:disconnected");
+  });
+
+  socket.on("chat:message", ({ text }) => {
+    const partnerId = rooms.get(socket.id);
+    if (!partnerId) return;
+    const msg = {
+      from: socket.id,
+      text: String(text).slice(0, 500),
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    io.to(partnerId).emit("chat:message", msg);
+  });
+
+  socket.on("chat:typing", ({ typing }) => {
+    const partnerId = rooms.get(socket.id);
+    if (partnerId) io.to(partnerId).emit("chat:typing", { typing });
   });
 
   socket.on("disconnect", () => {
-    waiting.delete(socket.id);
-    for (const [rid, room] of rooms) {
-      if (room.users.includes(socket.id)) {
-        const other = room.users.find((id) => id !== socket.id);
-        if (other) io.to(other).emit("partner_left");
-        rooms.delete(rid);
-        break;
-      }
+    const idx = waiting.indexOf(socket);
+    if (idx !== -1) waiting.splice(idx, 1);
+    const partnerId = rooms.get(socket.id);
+    if (partnerId) {
+      io.to(partnerId).emit("chat:partner_left");
+      rooms.delete(socket.id);
+      rooms.delete(partnerId);
     }
+    nicks.delete(socket.id);
   });
 });
 
-app.get("/api/online", (_, res) => res.json({ count: rooms.size }));
+app.get("/api/online", (_, res) => res.json({ count: rooms.size / 2 }));
 
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => console.log(`AnonAZ on :${PORT}`));

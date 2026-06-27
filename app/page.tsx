@@ -1,647 +1,425 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Mic, MicOff, Phone, PhoneOff, Send, MapPin, Sparkles, ArrowRight, X, Play, Loader2, ChevronDown } from "lucide-react";
-import { io, Socket } from "socket.io-client";
-import { BACKEND_URL } from "@/lib/config";
-
-const uid = () => Math.random().toString(36).slice(2, 12);
-type Msg = { id: string; content: string; mine: boolean; voice?: boolean };
-type Lang = "az" | "ru";
-
-const L: Record<Lang, any> = {
-  az: {
-    title: "AnonAZ", subtitle: "Anonim çat", desc: "Bütün Azərbaycan üzrə anonim çat", start: "Ünsiyyətə başla",
-    mode: "Ünsiyyət növünü seç", text: "Mətn", voice: "Səs",
-    from: "Dən", to: "Dək", anyCity: "İstənilən şəhər", anyDist: "İstənilən rayon",
-    findText: "Mətn söhbəti üçün axtarılır...", findVoice: "Səsli söhbət üçün axtarılır...",
-    cancel: "Ləğv et", found: "Həmsöhbət tapıldı", next: "Növbəti",
-    placeholder: "Mesaj yaz...", voiceMsg: "Səsli mesaj", call: "Zəng et", endCall: "Zəngi bitir",
-    online: "hazırda söhbət edir", search: "Axtarılır...", err_conn: "Bağlantı xətası",
-    textChat: "Mətn söhbəti", voiceChat: "Səsli zəng", filters: "Filtrlər",
-  },
-  ru: {
-    title: "AnonAZ", subtitle: "Анонимный чат", desc: "Анонимный чат по всему Азербайджану", start: "Начать общение",
-    mode: "Выбери тип общения", text: "Текст", voice: "Голос",
-    from: "От", to: "До", anyCity: "Любой город", anyDist: "Любой район",
-    findText: "Поиск собеседника для текстового чата...", findVoice: "Поиск собеседника для голосового чата...",
-    cancel: "Отмена", found: "Собеседник найден", next: "Следующий",
-    placeholder: "Напиши сообщение...", voiceMsg: "Голосовое", call: "Позвонить", endCall: "Завершить звонок",
-    online: "человек сейчас общаются", search: "Поиск...", err_conn: "Ошибка подключения",
-    textChat: "Текстовый чат", voiceChat: "Голосовой звонок", filters: "Фильтры",
-  },
-};
-
-const CITIES: Record<string, string[]> = {
-  "26 məktəb": ["26 məktəb"],
-  "Bakı": ["Nəsimi", "Nərimanov", "Xətai", "Yasamal", "Səbail", "Qaradağ", "Binəqədi", "Pirallahı", "Xəzər", "Suraxanı", "Sabunçu"],
-  "Sumqayıt": ["Mərkəz", "28 May", "Həzi Aslanov"],
-  "Gəncə": ["Kəpəz", "Nizami"],
-  "Mingəçevir": ["Mərkəz", "Xəzər"],
-  "Şirvan": ["Mərkəz"],
-  "Lənkəran": ["Mərkəz"],
-  "Şəki": ["Mərkəz"],
-  "Xırdalan": ["Mərkəz"],
-};
-
-const CITY_RU: Record<string, string> = {
-  "26 məktəb": "26 məktəb", "Bakı": "Баку", "Sumqayıt": "Сумгаит", "Gəncə": "Гянджа",
-  "Mingəçevir": "Мингечевир", "Şirvan": "Ширван", "Lənkəran": "Ленкорань", "Şəki": "Шеки", "Xırdalan": "Хырдалан",
-};
-
-function createPC(iceCb: (c: RTCIceCandidate) => void, trackCb: (s: MediaStream) => void) {
-  const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-  pc.onicecandidate = (e) => { if (e.candidate) iceCb(e.candidate); };
-  pc.ontrack = (e) => { trackCb(e.streams[0]); };
-  return pc;
-}
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
+import {
+  Heart, Search, MessageCircleMore,
+  Users, ArrowRight, Sparkles, ChevronRight,
+  Flag, ShieldCheck, Ban, Star, Shuffle, UserPlus
+} from "lucide-react";
+import { useI18n } from "@/lib/i18n";
+import { UserCard } from "@/components/user-card";
+import { api } from "@/lib/api";
+import { useToast } from "@/components/toast";
+import { SkeletonList } from "@/components/loader";
+import type { UserCard as UserCardType } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { cities } from "@/lib/cities";
+import { mockUsers } from "@/lib/mock-data";
 
 const fadeUp = {
-  initial: { opacity: 0, y: 20 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }
+  initial: { opacity: 0, y: 24 },
+  whileInView: { opacity: 1, y: 0 },
+  viewport: { once: true, margin: "-60px" },
+  transition: { duration: 0.6, ease: [0.25, 0.46, 0.45, 0.94] }
 };
 
 const stagger = {
   initial: { opacity: 0 },
-  animate: { opacity: 1 },
-  transition: { staggerChildren: 0.08 }
+  whileInView: { opacity: 1 },
+  viewport: { once: true },
+  transition: { staggerChildren: 0.06 }
 };
 
-export default function Home() {
-  const [userId, setUserId] = useState("");
-  const [lang, setLang] = useState<Lang>("ru");
-  const [mode, setMode] = useState<"text" | "voice" | null>(null);
-  const [city, setCity] = useState("any");
-  const [district, setDistrict] = useState("");
-  const [ageFrom, setAgeFrom] = useState(18);
-  const [ageTo, setAgeTo] = useState(60);
-  const [step, setStep] = useState<"mode" | "searching" | "chat">("mode");
-  const [room, setRoom] = useState<any>(null);
-  const [partner, setPartner] = useState<string | null>(null);
-  const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [input, setInput] = useState("");
-  const [onlineCount, setOnlineCount] = useState(0);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const [recording, setRecording] = useState(false);
-  const mediaRecorder = useRef<MediaRecorder | null>(null);
-  const audioChunks = useRef<Blob[]>([]);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
-  const [inCall, setInCall] = useState(false);
-  const [callDuration, setCallDuration] = useState(0);
-  const callTimer = useRef<NodeJS.Timeout | null>(null);
-  const [remoteAudio, setRemoteAudio] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [error, setError] = useState("");
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const socketRef = useRef<Socket | null>(null);
+export default function HomePage() {
+  const { t, language } = useI18n();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [onlineUsers, setOnlineUsers] = useState<UserCardType[]>([]);
+  const [newUsers, setNewUsers] = useState<UserCardType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState({ users: 0, online: 0, messages: 0 });
+  const [searchQ, setSearchQ] = useState("");
+  const [searchCity, setSearchCity] = useState("");
+  const [searchGender, setSearchGender] = useState("");
+  const [searchAge, setSearchAge] = useState("");
+  const [searchAgeMin, setSearchAgeMin] = useState("");
+  const [searchResults, setSearchResults] = useState<UserCardType[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [valentineUsername, setValentineUsername] = useState("");
 
-  const t = L[lang];
-
-  const cityName = useMemo(() => (c: string) => lang === "ru" && CITY_RU[c] ? CITY_RU[c] : c, [lang]);
-
-  useEffect(() => { setUserId(localStorage.getItem("uid") || uid()); }, []);
-  useEffect(() => { if (userId) localStorage.setItem("uid", userId); }, [userId]);
-
-  // Socket connection
   useEffect(() => {
-    const s = io(BACKEND_URL);
-    socketRef.current = s;
-
-    s.on("partner_found", (data: any) => {
-      setPartner(data.user2_id === userId ? data.user1_id : data.user2_id);
-      setStep("chat");
-      setRoom(data);
-      if (mode === "voice") initVoiceCall(data.user2_id === userId);
-    });
-
-    s.on("new_message", (msg: Msg) => {
-      setMsgs((prev) => {
-        if (prev.some((p) => p.id === msg.id)) return prev;
-        return [...prev, msg];
-      });
-    });
-
-    s.on("signal", (data: { type: string; payload: any }) => {
-      if (data.type === "offer") handleOffer(data.payload);
-      else if (data.type === "answer") handleAnswer(data.payload);
-      else if (data.type === "ice") handleIce(data.payload);
-    });
-
-    s.on("partner_left", () => {
-      endCall();
-      setRoom(null); setPartner(null); setMsgs([]);
-      setStep("mode");
-    });
-
-    s.on("search_cancelled", () => {});
-
-    s.on("connect_error", () => {
-      setError(t.err_conn);
-    });
-
-    return () => { s.disconnect(); };
-  }, [userId, mode]);
-
-  // Online count
-  useEffect(() => {
-    const int = setInterval(async () => {
-      try {
-        const r = await fetch("http://localhost:4000/api/online");
-        const d = await r.json();
-        setOnlineCount(d.count);
-      } catch {}
-    }, 5000);
-    return () => clearInterval(int);
+    Promise.all([
+      api.getOnlineUsers().catch(() => null),
+      api.getUsers().catch(() => null),
+    ]).then(([online, all]) => {
+      if (online && all) {
+        const mappedOnline = (online as any[]).map(mapUser);
+        const mappedAll = (all as any[]).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map(mapUser);
+        setOnlineUsers(mappedOnline);
+        setNewUsers(mappedAll.slice(0, 8));
+        setStats({ users: all.length, online: online.length, messages: all.length * 3 });
+      } else {
+        setOnlineUsers(mockUsers.filter((u) => u.online));
+        setNewUsers(mockUsers);
+        setStats({ users: mockUsers.length, online: mockUsers.filter((u) => u.online).length, messages: mockUsers.length * 3 });
+      }
+      setLoading(false);
+    }).catch(() => setLoading(false));
   }, []);
 
-  const districts = city !== "any" ? CITIES[city] : [];
+  function mapUser(u: any): UserCardType {
+    return { id: u.id, username: u.username, age: u.age || 0, city: u.city || "", district: u.district || "", gender: u.gender || "other", description: u.description || "", online: u.isOnline, lastSeen: u.lastSeen || "", interests: [], avatar: u.avatar || "", status: "" };
+  }
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
-
-  const sendSignal = (type: string, payload: any) => {
-    if (!room?.id || !socketRef.current) return;
-    socketRef.current.emit("signal", { roomId: room.id, type, payload });
-  };
-
-  const handleOffer = async (sdp: string) => {
-    const pc = createPC(
-      (c) => sendSignal("ice", JSON.stringify(c.toJSON())),
-      (s) => { setRemoteAudio(true); if (audioRef.current) audioRef.current.srcObject = s; }
-    );
-    pcRef.current = pc;
-    await pc.setRemoteDescription(JSON.parse(sdp));
-    const ans = await pc.createAnswer();
-    await pc.setLocalDescription(ans);
-    sendSignal("answer", JSON.stringify(ans));
-  };
-
-  const handleAnswer = async (sdp: string) => {
-    if (pcRef.current) await pcRef.current.setRemoteDescription(JSON.parse(sdp));
-  };
-
-  const handleIce = async (ice: string) => {
-    if (pcRef.current) await pcRef.current.addIceCandidate(JSON.parse(ice));
-  };
-
-  const initVoiceCall = async (isJoiner: boolean) => {
+  const doSearch = async () => {
+    setSearching(true);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStreamRef.current = stream;
-      const pc = createPC(
-        (c) => sendSignal("ice", JSON.stringify(c.toJSON())),
-        (s) => { setRemoteAudio(true); if (audioRef.current) audioRef.current.srcObject = s; }
-      );
-      pcRef.current = pc;
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-      if (!isJoiner) {
-        const o = await pc.createOffer();
-        await pc.setLocalDescription(o);
-        sendSignal("offer", JSON.stringify(o));
-      }
-      setInCall(true);
-      let sec = 0;
-      callTimer.current = setInterval(() => { sec++; setCallDuration(sec); }, 1000);
-    } catch {
-      alert(lang === "az" ? "Mikrofon əlçatan deyil" : "Микрофон не доступен");
-    }
+      const params = new URLSearchParams();
+      if (searchQ) params.set("q", searchQ);
+      if (searchCity) params.set("city", searchCity);
+      if (searchGender && searchGender !== "all") params.set("gender", searchGender);
+      if (searchAgeMin) params.set("minAge", searchAgeMin);
+      if (searchAge) params.set("maxAge", searchAge);
+      const res = await api.searchUsers(`?${params.toString()}`);
+      setSearchResults((res as any[]).map(mapUser));
+    } catch { setSearchResults([]); }
+    setSearching(false);
   };
-
-  const endCall = () => {
-    if (pcRef.current) pcRef.current.close();
-    if (localStreamRef.current) localStreamRef.current.getTracks().forEach((t) => t.stop());
-    if (callTimer.current) clearInterval(callTimer.current);
-    pcRef.current = null; localStreamRef.current = null;
-    setInCall(false); setCallDuration(0); setRemoteAudio(false);
-  };
-
-  const startSearch = async (m: "text" | "voice") => {
-    setError("");
-    setMode(m);
-    setStep("searching");
-    if (socketRef.current) {
-      socketRef.current.emit("find_partner", {
-        userId,
-        mode: m,
-        city: city !== "any" ? city : null,
-        district: district || null,
-        ageFrom,
-        ageTo,
-      });
-    }
-  };
-
-  const cancelSearch = () => {
-    if (socketRef.current) socketRef.current.emit("cancel_search");
-    setStep("mode");
-  };
-
-  const sendMsg = async () => {
-    if (!input.trim() || !room?.id || !socketRef.current) return;
-    const text = input.trim();
-    setInput("");
-    socketRef.current.emit("send_message", { roomId: room.id, content: text });
-  };
-
-  const next = async () => {
-    endCall();
-    if (room?.id && socketRef.current) socketRef.current.emit("next", room.id);
-    setRoom(null); setPartner(null); setMsgs([]);
-    setStep("searching");
-    setTimeout(() => startSearch(mode || "text"), 300);
-  };
-
-  const startRec = async () => {
-    if (!room || recording) return;
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(s, { mimeType: "audio/webm;codecs=opus" });
-      mediaRecorder.current = mr; audioChunks.current = [];
-      mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.current.push(e.data); };
-      mr.onstop = async () => {
-        s.getTracks().forEach((t) => t.stop());
-        const b = new Blob(audioChunks.current, { type: "audio/webm" }); if (b.size > 500000) return;
-        const reader = new FileReader();
-        reader.onloadend = async () => {
-          if (room?.id && socketRef.current) {
-            socketRef.current.emit("send_message", {
-              roomId: room.id,
-              content: "VOICE:" + (reader.result as string).split(",")[1],
-            });
-          }
-        };
-        reader.readAsDataURL(b);
-      };
-      mr.start(); setRecording(true);
-    } catch { alert(lang === "az" ? "Mikrofon əlçatan deyil" : "Микрофон не доступен"); }
-  };
-
-  const stopRec = () => { if (mediaRecorder.current && recording) { mediaRecorder.current.stop(); setRecording(false); } };
-  const playVoice = (b64: string) => { try { new Audio("data:audio/webm;base64," + b64).play(); } catch {} };
-  const secToTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden">
-      {/* Background effects */}
-      <div className="pointer-events-none fixed inset-0 z-0">
-        {Array.from({ length: 50 }).map((_, i) => (
-          <motion.div
-            key={i}
-            className="absolute h-[2px] w-[2px] rounded-full bg-white"
-            style={{
-              left: `${Math.random() * 100}%`, top: `${Math.random() * 100}%`,
-              opacity: Math.random() * 0.5 + 0.15,
-            }}
-            animate={{ opacity: [0.2, 1, 0.2] }}
-            transition={{ duration: Math.random() * 5 + 3, repeat: Infinity, delay: Math.random() * 5 }}
-          />
-        ))}
-      </div>
+    <main className="relative mx-auto max-w-7xl px-4 pb-32 pt-8 sm:px-6 lg:px-8">
 
-      {/* Error toast */}
-      <AnimatePresence>
-        {error && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed left-1/2 top-16 z-50 max-w-[360px] -translate-x-1/2 rounded-xl border border-red-500/30 bg-red-500/15 px-5 py-3 text-center text-sm text-white backdrop-blur-xl"
-          >
-            {error}
-            <button onClick={() => setError("")} className="ml-2 align-middle text-lg text-white/60 hover:text-white">&times;</button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ─── HERO ─── */}
+      <motion.section
+        {...fadeUp}
+        className="relative overflow-hidden rounded-4xl border border-white/[0.06] bg-gradient-to-b from-white/[0.03] to-transparent p-8 text-center sm:p-16 lg:p-24"
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,0.12)_0%,transparent_70%)]" />
 
-      {/* Language switcher */}
-      <div className="fixed right-4 top-4 z-10 flex gap-1.5">
-        {(["az", "ru"] as Lang[]).map((l) => (
+        {/* Floating orbs */}
+        <div className="absolute top-10 left-10 h-24 w-24 rounded-full bg-accent/10 blur-3xl animate-float" />
+        <div className="absolute bottom-10 right-10 h-32 w-32 rounded-full bg-violet-500/10 blur-3xl animate-float" style={{ animationDelay: "2s" }} />
+        <div className="absolute top-1/2 left-1/3 h-16 w-16 rounded-full bg-fuchsia-500/8 blur-3xl animate-float" style={{ animationDelay: "1s" }} />
+
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.15 }}
+          className="relative z-10 mx-auto inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/8 px-4 py-1.5 text-xs font-medium text-accent/90 backdrop-blur-md"
+        >
+          <Sparkles className="h-3 w-3" />
+          {t("heroBadge")}
+        </motion.div>
+
+        <h1 className="relative z-10 mx-auto mt-6 max-w-3xl text-4xl font-bold leading-[1.1] tracking-tight text-white sm:text-5xl lg:text-6xl">
+          <span className="bg-gradient-to-r from-white via-purple-200 to-white bg-clip-text text-transparent">
+            {t("heroTitle")}
+          </span>
+        </h1>
+
+        <p className="relative z-10 mx-auto mt-5 max-w-xl text-sm leading-6 text-white/50 sm:text-base">
+          {t("heroDescription")}
+        </p>
+
+        <div className="relative z-10 mt-8 flex flex-wrap items-center justify-center gap-3">
           <motion.button
-            key={l}
-            onClick={() => setLang(l)}
+            onClick={() => router.push("/chat")}
             whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all ${
-              lang === l
-                ? "border-accent/50 bg-accent text-white shadow-lg shadow-accent/25"
-                : "border-white/10 bg-white/5 text-white/60 hover:text-white"
-            }`}
+            whileTap={{ scale: 0.97 }}
+            className="inline-flex items-center gap-2 rounded-2xl bg-accent px-7 py-4 text-sm font-semibold text-white shadow-lg shadow-accent/25 transition-all duration-300 hover:bg-violet-500 hover:shadow-[0_0_40px_-8px_rgba(139,92,246,0.5)]"
           >
-            {l.toUpperCase()}
+            <MessageCircleMore className="h-5 w-5" />
+            {language === "ru" ? "Начать анонимный чат" : "Anonim çata başla"}
           </motion.button>
-        ))}
-      </div>
+          <motion.button
+            onClick={() => router.push("/register")}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.97 }}
+            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-6 py-3.5 text-sm font-medium text-white/80 backdrop-blur-lg transition-all duration-300 hover:bg-white/10 hover:border-white/20"
+          >
+            <UserPlus className="h-4 w-4" />
+            {t("heroPrimary")}
+          </motion.button>
+        </div>
 
-      {/* Mode Selection */}
-      {step === "mode" && (
-        <motion.div {...fadeUp} className="relative z-10 flex flex-1 items-center justify-center p-5">
-          <div className="flex w-full max-w-sm flex-col gap-5">
+        {/* Stats */}
+        <div className="relative z-10 mx-auto mt-12 grid max-w-2xl grid-cols-3 gap-px overflow-hidden rounded-2xl border border-white/[0.06] bg-white/[0.04]">
+          {[
+            { value: stats.users, label: t("statUsers"), icon: Users },
+            { value: stats.online, label: t("statOnline"), icon: Sparkles },
+            { value: stats.messages, label: t("statMessages"), icon: MessageCircleMore }
+          ].map((s, i) => (
             <motion.div
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="text-center"
+              key={s.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.4 + i * 0.1 }}
+              className="flex flex-col items-center justify-center px-4 py-5 text-center group hover:bg-white/[0.02] transition-colors"
             >
-              <motion.div
-                animate={{ scale: [1, 1.1, 1] }}
-                transition={{ duration: 3, repeat: Infinity }}
-                className="mb-3 text-5xl"
-              >
-                <Sparkles className="mx-auto h-12 w-12 text-accent" />
-              </motion.div>
-              <h1 className="bg-gradient-to-r from-violet-300 via-accent to-purple-300 bg-clip-text text-3xl font-extrabold tracking-tight text-transparent">
-                {t.title}
-              </h1>
-              <p className="mt-2 text-sm text-white/50">{t.desc}</p>
-              {onlineCount > 0 && (
-                <motion.p
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mt-2 flex items-center justify-center gap-1.5 text-xs text-emerald-400"
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-                  </span>
-                  {onlineCount} {t.online}
-                </motion.p>
-              )}
+              <s.icon className="h-4 w-4 text-accent/40 mb-1 group-hover:text-accent/60 transition-colors" />
+              <span className="text-2xl font-bold text-white tabular-nums">{typeof s.value === "number" ? s.value.toLocaleString() : s.value}</span>
+              <span className="mt-0.5 text-[11px] text-white/40">{s.label}</span>
             </motion.div>
+          ))}
+        </div>
+      </motion.section>
 
-            <motion.div {...stagger} className="flex flex-col gap-3">
-              <motion.button
-                {...fadeUp}
-                onClick={() => startSearch("text")}
-                whileHover={{ scale: 1.02, x: 4 }}
-                whileTap={{ scale: 0.98 }}
-                className="group flex items-center gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-5 text-left transition-all hover:border-accent/30 hover:bg-accent/5"
-              >
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 text-accent">
-                  <MessageCircle className="h-7 w-7" />
-                </div>
-                <div className="flex-1">
-                  <div className="text-base font-semibold text-white">{t.text} {lang === "az" ? "Söhbət" : "чат"}</div>
-                  <div className="mt-0.5 text-xs text-white/40">{lang === "az" ? "Mətn yaz, səsli mesaj göndər" : "Пиши текст, отправляй голосовые"}</div>
-                </div>
-                <ArrowRight className="h-5 w-5 text-white/20 transition group-hover:text-accent group-hover:translate-x-1" />
-              </motion.button>
+      {/* ─── SEARCH ─── */}
+      <motion.section {...fadeUp} className="mt-20">
+        <div className="flex flex-col items-center text-center">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1 text-[11px] text-white/50 backdrop-blur-md">
+            <Search className="h-3 w-3" />
+            {t("searchTitle")}
+          </span>
+          <p className="mt-3 text-sm text-white/40">{t("searchDescription")}</p>
+        </div>
 
-              <motion.button
-                {...fadeUp}
-                onClick={() => startSearch("voice")}
-                whileHover={{ scale: 1.02, x: 4 }}
-                whileTap={{ scale: 0.98 }}
-                className="group relative flex items-center gap-4 overflow-hidden rounded-2xl border border-accent/20 bg-gradient-to-r from-accent/[0.08] to-transparent p-5 text-left transition-all hover:shadow-[0_0_30px_-8px_rgba(139,92,246,0.3)]"
-              >
-                <motion.div
-                  className="absolute inset-0 bg-gradient-to-r from-accent/[0.06] to-transparent"
-                  animate={{ opacity: [0, 0.5, 0] }}
-                  transition={{ duration: 3, repeat: Infinity }}
-                />
-                <div className="relative z-10 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/15 text-accent">
-                  <Mic className="h-7 w-7" />
-                </div>
-                <div className="relative z-10 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base font-semibold text-white">{t.voice} {lang === "az" ? "Zəng" : "звонок"}</span>
-                    <span className="rounded-full bg-accent/20 px-2 py-0.5 text-[10px] font-semibold text-accent">NEW</span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-white/40">{lang === "az" ? "Canlı səsli danışıq" : "Живой голосовой разговор"}</div>
-                </div>
-                <ArrowRight className="relative z-10 h-5 w-5 text-white/20 transition group-hover:text-accent group-hover:translate-x-1" />
-              </motion.button>
-            </motion.div>
-
-            {/* Filters */}
-            <motion.div {...fadeUp} className="overflow-hidden rounded-2xl border border-white/[0.06]">
-              <button
-                onClick={() => setFiltersOpen(!filtersOpen)}
-                className="flex w-full items-center justify-between px-4 py-3 text-xs text-white/50 transition hover:text-white/80"
-              >
-                <span className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5" /> {t.filters}</span>
-                <ChevronDown className={`h-4 w-4 transition ${filtersOpen ? "rotate-180" : ""}`} />
-              </button>
-              <AnimatePresence>
-                {filtersOpen && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="border-t border-white/[0.06] px-4 py-3"
-                  >
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className="mb-1 block text-[10px] uppercase text-white/30">{t.from}</label>
-                        <input type="number" min={14} max={99} value={ageFrom} onChange={(e) => setAgeFrom(Number(e.target.value))}
-                          className="field !rounded-xl !px-3 !py-2 text-xs" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="mb-1 block text-[10px] uppercase text-white/30">{t.to}</label>
-                        <input type="number" min={14} max={99} value={ageTo} onChange={(e) => setAgeTo(Number(e.target.value))}
-                          className="field !rounded-xl !px-3 !py-2 text-xs" />
-                      </div>
-                    </div>
-                    <select value={city} onChange={(e) => { setCity(e.target.value); setDistrict(""); }}
-                      className="field mt-2 !rounded-xl !px-3 !py-2 text-xs">
-                      <option value="any">{t.anyCity}</option>
-                      {Object.keys(CITIES).map((c) => <option key={c} value={c}>{c === "26 məktəb" ? "🏫 26 məktəb" : "🏙️ " + cityName(c)}</option>)}
-                    </select>
-                    {city !== "any" && city !== "26 məktəb" && (
-                      <select value={district} onChange={(e) => setDistrict(e.target.value)}
-                        className="field mt-2 !rounded-xl !px-3 !py-2 text-xs">
-                        <option value="">📍 {t.anyDist}</option>
-                        {districts.map((d) => <option key={d} value={d}>📍 {d}</option>)}
-                      </select>
-                    )}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </motion.div>
-          </div>
-        </motion.div>
-      )}
-
-      {/* Searching */}
-      {step === "searching" && (
-        <motion.div {...fadeUp} className="relative z-10 flex flex-1 flex-col items-center justify-center gap-5">
-          <motion.div
-            animate={{ rotate: 360 }}
-            transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-            className="flex h-16 w-16 items-center justify-center rounded-full border-[3px] border-white/10 border-t-accent shadow-lg shadow-accent/20"
-          >
-            <Loader2 className="h-6 w-6 text-accent" />
-          </motion.div>
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: [0.4, 1, 0.4] }}
-            transition={{ duration: 2, repeat: Infinity }}
-            className="text-base font-medium text-white/70"
-          >
-            {mode === "voice" ? t.findVoice : t.findText}
-          </motion.p>
-          <div className="flex gap-1.5">
-            {[0, 1, 2].map((i) => (
-              <motion.div
-                key={i}
-                className="h-2.5 w-2.5 rounded-full bg-accent"
-                animate={{ scale: [0, 1, 0] }}
-                transition={{ duration: 1.4, repeat: Infinity, delay: i * 0.2 }}
-              />
+        <div className="mx-auto mt-6 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-4">
+          <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doSearch()}
+            placeholder={t("searchNickname")} className="field text-xs"
+          />
+          <select value={searchCity} onChange={(e) => setSearchCity(e.target.value)} className="field text-xs text-white/50">
+            <option value="">{t("searchCity")}</option>
+            {cities.map((c) => (
+              <option key={c.nameAz} value={c.nameAz}>{language === "ru" ? c.nameRu : c.nameAz}</option>
             ))}
+          </select>
+          <div className="flex gap-1.5">
+            <select value={searchAgeMin} onChange={(e) => setSearchAgeMin(e.target.value)} className="field text-xs text-white/50 flex-1 min-w-0">
+              <option value="">{language === "ru" ? "От" : "Min"}</option>
+              {Array.from({ length: 42 }, (_, i) => (
+                <option key={i + 18} value={i + 18}>{i + 18}</option>
+              ))}
+            </select>
+            <select value={searchAge} onChange={(e) => setSearchAge(e.target.value)} className="field text-xs text-white/50 flex-1 min-w-0">
+              <option value="">{language === "ru" ? "До" : "Max"}</option>
+              {Array.from({ length: 42 }, (_, i) => (
+                <option key={i + 18} value={i + 18}>{i + 18}</option>
+              ))}
+            </select>
           </div>
-          <motion.button
-            onClick={cancelSearch}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className="secondary-button !rounded-xl !px-6 !py-2.5 text-xs"
-          >
-            &larr; {t.cancel}
-          </motion.button>
-        </motion.div>
-      )}
+          <select value={searchGender} onChange={(e) => setSearchGender(e.target.value)} className="field text-xs text-white/50">
+            <option value="">{t("searchGender")}</option>
+            <option value="all">{t("searchAll")}</option>
+            <option value="male">{t("searchMale")}</option>
+            <option value="female">{t("searchFemale")}</option>
+            <option value="other">{t("searchOther")}</option>
+          </select>
+        </div>
 
-      {/* Chat mode */}
-      {step === "chat" && mode === "text" && (
-        <div className="relative z-10 mx-auto flex w-full max-w-lg flex-1 flex-col px-4">
-          <div className="flex items-center justify-between border-b border-white/[0.06] py-3">
-            <div className="flex items-center gap-2.5">
-              <motion.span
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ duration: 2, repeat: Infinity }}
-                className="h-2.5 w-2.5 rounded-full bg-emerald-400"
-              />
-              <span className="text-sm text-white/60">{t.found}</span>
-            </div>
-            <motion.button
-              onClick={next}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.95 }}
-              className="primary-button !rounded-xl !px-5 !py-2 text-xs"
-            >
-              {t.next}
-            </motion.button>
-          </div>
+        <div className="mx-auto mt-4 flex flex-wrap justify-center gap-3">
+          <button onClick={doSearch} disabled={searching} className="primary-button max-w-xs flex-1 gap-2 text-xs disabled:opacity-40">
+            <Search className="h-4 w-4" />
+            {searching ? "..." : t("searchTitle")}
+          </button>
+          <button onClick={async () => {
+            try {
+              const all = await api.getUsers();
+              if (all.length === 0) return;
+              const random = all[Math.floor(Math.random() * all.length)];
+              router.push(`/profile?username=${random.username}`);
+            } catch {}
+          }} className="secondary-button gap-2 text-xs">
+            <Shuffle className="h-4 w-4" />
+            {t("random")}
+          </button>
+        </div>
 
-          <div className="flex-1 space-y-2 overflow-y-auto py-3">
-            <AnimatePresence>
-              {msgs.map((m, i) => (
-                <motion.div
-                  key={m.id}
-                  initial={{ opacity: 0, y: 12, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ delay: Math.min(i * 0.02, 0.2) }}
-                  className={`flex ${m.mine ? "justify-end" : "justify-start"}`}
-                >
-                  <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                    m.mine ? "rounded-br-md bg-accent/20 text-white" : "rounded-bl-md bg-white/8 text-white/85"
-                  }`}>
-                    {m.voice ? (
-                      <button onClick={() => playVoice(m.content)}
-                        className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/80 transition hover:bg-white/10">
-                        <Play className="h-3.5 w-3.5" /> {t.voiceMsg} ({Math.round(m.content.length / 10000)}c)
-                      </button>
-                    ) : (
-                      m.content
-                    )}
-                  </div>
+        {/* Search results */}
+        {searchResults !== null && (
+          <div className="mt-6">
+            <p className="mb-4 text-xs text-white/40">{searchResults.length} {t("found")}</p>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {searchResults.length === 0 ? (
+                <p className="col-span-full text-center text-sm text-white/30">{t("noUsersFound")}</p>
+              ) : searchResults.map((user) => (
+                <motion.div key={user.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                  <UserCard user={user} />
                 </motion.div>
               ))}
-            </AnimatePresence>
-            <div ref={bottomRef} />
+            </div>
           </div>
+        )}
+      </motion.section>
 
-          <div className="flex items-center gap-2 border-t border-white/[0.06] py-3">
-            <motion.button
-              onClick={recording ? stopRec : startRec}
-              whileTap={{ scale: 0.9 }}
-              className={`flex h-11 w-11 items-center justify-center rounded-xl transition-all ${
-                recording ? "bg-red-500 text-white shadow-lg shadow-red-500/30" : "bg-white/5 text-white/50 hover:bg-white/10"
-              }`}
+      {/* ─── ONLINE NOW ─── */}
+      <motion.section id="online-section" {...fadeUp} className="mt-20">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="section-title flex items-center gap-2">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-400" />
+              </span>
+              {t("onlineNow")}
+            </h2>
+            <p className="section-copy mt-1">
+              {onlineUsers.length} {t("statOnline")}
+            </p>
+          </div>
+          <button onClick={() => router.push("/chat")} className="secondary-button text-xs">
+            {t("anonymousChat")} <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <motion.div
+          {...stagger}
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          {loading ? <SkeletonList count={4} /> : onlineUsers.map((user) => (
+            <motion.div
+              key={user.id}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
             >
-              {recording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
-            </motion.button>
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMsg()}
-              placeholder={t.placeholder}
-              className="field !rounded-xl !py-2.5 text-sm"
-            />
-            <motion.button
-              onClick={sendMsg}
-              whileTap={{ scale: 0.9 }}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-accent text-white shadow-lg shadow-accent/25 transition hover:bg-violet-500"
+              <UserCard user={user} />
+            </motion.div>
+          ))}
+        </motion.div>
+      </motion.section>
+
+      {/* ─── NEW PROFILES ─── */}
+      <motion.section {...fadeUp} className="mt-16">
+        <div className="mb-6 flex items-center justify-between">
+          <div>
+            <h2 className="section-title">{t("newProfiles")}</h2>
+            <p className="section-copy mt-1">{t("statUsers")}</p>
+          </div>
+          <button onClick={() => router.push("/register")} className="secondary-button text-xs">
+            {t("heroPrimary")} <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <motion.div
+          {...stagger}
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4"
+        >
+          {newUsers.slice(0, 4).map((user) => (
+            <motion.div
+              key={user.id}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
             >
-              <Send className="h-5 w-5" />
+              <UserCard user={user} />
+            </motion.div>
+          ))}
+        </motion.div>
+      </motion.section>
+
+      {/* ─── ANONYMOUS CHAT ─── */}
+      <motion.section {...fadeUp} className="mt-20">
+        <div className="relative overflow-hidden rounded-4xl border border-white/[0.06] bg-gradient-to-b from-accent/[0.02] to-transparent p-8 text-center sm:p-12">
+          <div className="absolute left-1/2 top-0 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent/10 blur-3xl" />
+
+          <div className="relative z-10">
+            <span className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/8 px-3 py-1 text-[11px] text-accent backdrop-blur-md">
+              <MessageCircleMore className="h-3 w-3" />
+              {t("anonymousChat")}
+            </span>
+            <h2 className="section-title mt-3">
+              <span className="bg-gradient-to-r from-white via-purple-200 to-white bg-clip-text text-transparent">
+                {language === "ru" ? "Случайный анонимный чат" : "Təsadüfi anonim çat"}
+              </span>
+            </h2>
+            <p className="section-copy mx-auto mt-2">
+              {language === "ru"
+                ? "Нажми кнопку и начни общение со случайным собеседником. Без регистрации, без логинов."
+                : "Düyməyə bas və təsadüfi həmsöhbətlə ünsiyyətə başla. Qeydiyyatsız, girişsiz."}
+            </p>
+
+            <motion.button
+              onClick={() => router.push("/chat")}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.97 }}
+              className="mt-8 inline-flex items-center gap-2 rounded-2xl bg-accent px-8 py-4 text-sm font-semibold text-white shadow-lg shadow-accent/25 transition-all duration-300 hover:bg-violet-500 hover:shadow-[0_0_40px_-8px_rgba(139,92,246,0.5)]"
+            >
+              <MessageCircleMore className="h-5 w-5" />
+              {language === "ru" ? "Найти собеседника" : "Həmsöhbət tap"}
+              <ChevronRight className="h-4 w-4" />
             </motion.button>
           </div>
         </div>
-      )}
+      </motion.section>
 
-      {/* Voice chat mode */}
-      {step === "chat" && mode === "voice" && (
-        <motion.div {...fadeUp} className="relative z-10 flex flex-1 flex-col items-center justify-center gap-6">
-          <audio ref={audioRef} autoPlay />
-          <div className="text-sm text-white/50">{t.found}</div>
+      {/* ─── SAFETY ─── */}
+      <motion.section {...fadeUp} className="mt-20">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <span className="inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/5 px-3 py-1 text-[11px] text-white/50 backdrop-blur-md">
+            <ShieldCheck className="h-3 w-3" />
+            {t("navSafety")}
+          </span>
+          <h2 className="section-title mt-3">{t("safetyTitle")}</h2>
+          <p className="section-copy mt-2">{t("safetyDescription")}</p>
+        </div>
 
-          <motion.div
-            animate={inCall ? { scale: [1, 1.05, 1], boxShadow: ["0 0 30px rgba(34,197,94,0.2)", "0 0 60px rgba(34,197,94,0.4)", "0 0 30px rgba(34,197,94,0.2)"] } : {}}
-            transition={{ duration: 1.5, repeat: Infinity }}
-            className="flex h-28 w-28 items-center justify-center rounded-full bg-gradient-to-br from-emerald-500/20 to-emerald-600/10 text-5xl"
-          >
-            <Mic className={`h-12 w-12 ${inCall ? "text-emerald-400" : "text-white/30"}`} />
-          </motion.div>
-
-          {inCall && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-3xl font-bold tabular-nums text-white">
-              {secToTime(callDuration)}
-            </motion.div>
-          )}
-
-          {remoteAudio && (
-            <motion.div initial={{ opacity: 0, scale: 0 }} animate={{ opacity: 1, scale: 1 }} className="flex items-center gap-2 text-xs text-emerald-400">
-              <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-              </span>
-              {lang === "az" ? "Siz eşidilirsiniz" : "Собеседник слышит вас"}
-            </motion.div>
-          )}
-
-          <div className="flex gap-4">
-            {inCall ? (
-              <motion.button
-                onClick={endCall}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500 text-white shadow-lg shadow-red-500/30 transition hover:bg-red-600"
-              >
-                <PhoneOff className="h-7 w-7" />
-              </motion.button>
-            ) : (
-              <motion.button
-                onClick={() => initVoiceCall(false)}
-                whileHover={{ scale: 1.1 }}
-                whileTap={{ scale: 0.9 }}
-                className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 transition hover:bg-emerald-600"
-              >
-                <Phone className="h-7 w-7" />
-              </motion.button>
-            )}
-            <motion.button
-              onClick={next}
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.9 }}
-              className="flex h-16 w-16 items-center justify-center rounded-full bg-white/10 text-white/60 transition hover:bg-white/20 hover:text-white"
+        <div className="grid gap-4 sm:grid-cols-3">
+          {[
+            { icon: Ban, text: t("safetyOne") },
+            { icon: Flag, text: t("safetyTwo") },
+            { icon: Star, text: t("safetyThree") }
+          ].map((item) => (
+            <div
+              key={item.text}
+              className="flex items-start gap-4 rounded-3xl border border-white/[0.06] bg-white/[0.02] p-5 backdrop-blur-xl"
             >
-              <ArrowRight className="h-7 w-7" />
-            </motion.button>
-          </div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-accent/10 text-accent">
+                <item.icon className="h-5 w-5" />
+              </div>
+              <p className="text-sm leading-relaxed text-white/60">{item.text}</p>
+            </div>
+          ))}
+        </div>
+      </motion.section>
 
-          <div className="text-xs text-white/40">{inCall ? t.endCall : t.call}</div>
-        </motion.div>
-      )}
-    </div>
+      {/* ─── VALENTINE ─── */}
+      <motion.section {...fadeUp} className="mt-20">
+        <div className="relative overflow-hidden rounded-4xl border border-white/[0.06] bg-gradient-to-b from-accent/[0.03] to-transparent p-8 text-center sm:p-12">
+          <div className="absolute left-1/2 top-0 h-48 w-48 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-500/10 blur-3xl" />
+          <div className="relative z-10">
+            <span className="inline-flex items-center gap-2 rounded-full border border-rose-500/20 bg-rose-500/8 px-3 py-1 text-[11px] text-rose-400 backdrop-blur-md">
+              <Heart className="h-3 w-3" />
+              {t("valentineTitle")}
+            </span>
+            <h2 className="section-title mt-3">{t("valentineTitle")}</h2>
+            <p className="section-copy mx-auto mt-2">{t("valentineDescription")}</p>
+
+            <div className="mx-auto mt-6 flex max-w-md items-center gap-3 rounded-3xl border border-white/8 bg-white/[0.02] p-2 backdrop-blur-xl">
+              <span className="pl-3 text-sm text-white/40">@</span>
+              <input
+                value={valentineUsername}
+                onChange={(e) => setValentineUsername(e.target.value)}
+                placeholder="username"
+                className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/20"
+              />
+              <button onClick={async () => {
+                if (!valentineUsername.trim()) return;
+                try {
+                  await api.sendValentine({ toUsername: valentineUsername.trim(), text: "💌" });
+                  toast("valentine", "Valentine sent!");
+                  setValentineUsername("");
+                } catch (e: any) {
+                  toast("error", e.message || "Error");
+                }
+              }} className="rounded-2xl bg-rose-500/20 px-4 py-2.5 text-xs font-medium text-rose-400 transition hover:bg-rose-500/30">
+                <Heart className="inline h-3.5 w-3.5" /> {t("send")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </motion.section>
+
+      {/* ─── FOOTER ─── */}
+      <footer className="mt-24 border-t border-white/[0.06] pt-8 text-center">
+        <p className="text-xs text-white/30">{t("footer")}</p>
+        <div className="mt-3 flex items-center justify-center gap-4 text-[11px] text-white/20">
+          <span>AnonAZ v0.1</span>
+          <span>·</span>
+          <span>Next.js + Tailwind + Framer Motion</span>
+        </div>
+      </footer>
+    </main>
   );
 }

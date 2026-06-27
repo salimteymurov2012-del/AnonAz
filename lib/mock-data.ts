@@ -1,0 +1,16 @@
+import type { UserCard } from "./types";
+
+export const mockUsers: UserCard[] = [
+  { id: 1, username: "ayxan_77", age: 22, city: "Bakı", district: "Nəsimi", gender: "male", description: "Musiqi və kino həvəskarı", online: true, lastSeen: "1 dəq əvvəl", interests: ["musiqi", "kino", "idman"], avatar: "", status: "🌙" },
+  { id: 2, username: "leyla_m", age: 20, city: "Sumqayıt", district: "Mərkəz", gender: "female", description: "Sevimli kitablar və gəzintilər", online: true, lastSeen: "3 dəq əvvəl", interests: ["kitab", "gəzinti", "rəsm"], avatar: "", status: "✨" },
+  { id: 3, username: "ruslan_33", age: 25, city: "Gəncə", district: "Kəpəz", gender: "male", description: "İT sahəsində çalışıram, yeni insanlarla tanış olmaq istəyirəm", online: false, lastSeen: "1 saat əvvəl", interests: ["IT", "oyun", "futbol"], avatar: "", status: "☕" },
+  { id: 4, username: "sevda_01", age: 19, city: "Xırdalan", district: "Mərkəz", gender: "female", description: "Tələbə, səyahət və fotoqrafiya", online: true, lastSeen: "5 dəq əvvəl", interests: ["səyahət", "foto", "musiqi"], avatar: "", status: "📸" },
+  { id: 5, username: "elvin_q", age: 27, city: "Mingəçevir", district: "Mərkəz", gender: "male", description: "Səmimi ünsiyyət axtarıram", online: false, lastSeen: "2 saat əvvəl", interests: ["idman", "musiqi"], avatar: "", status: "🎧" },
+  { id: 6, username: "nigar_99", age: 21, city: "Şirvan", district: "Mərkəz", gender: "female", description: "Dostluq və maraqlı söhbətlər", online: true, lastSeen: "2 dəq əvvəl", interests: ["rəqs", "musiqi", "film"], avatar: "", status: "💃" },
+  { id: 7, username: "kenan_22", age: 24, city: "Lənkəran", district: "Mərkəz", gender: "male", description: "Təbiət və gəzinti həvəskarı yeni insanlar tanımaq istəyirəm", online: false, lastSeen: "30 dəq əvvəl", interests: ["təbiət", "gəzinti", "balıqçılıq"], avatar: "", status: "🎣" },
+  { id: 8, username: "aysel_m", age: 23, city: "Şəki", district: "Mərkəz", gender: "female", description: "Şirniyyatçı, xoş söhbət axtarıram", online: true, lastSeen: "4 dəq əvvəl", interests: ["şirniyyat", "oxu", "yazı"], avatar: "", status: "🍰" },
+  { id: 9, username: "murad_88", age: 26, city: "Bakı", district: "Xətai", gender: "male", description: "Developer, anonim söhbət maraqlıdır", online: true, lastSeen: "1 dəq əvvəl", interests: ["kod", "oyun", "manga"], avatar: "", status: "💻" },
+  { id: 10, username: "zulya_00", age: 18, city: "Sumqayıt", district: "Mərkəz", gender: "female", description: "İncəsənət və musiqi sevirəm", online: false, lastSeen: "15 dəq əvvəl", interests: ["incəsənət", "musiqi", "moda"], avatar: "", status: "🎨" },
+  { id: 11, username: "rasim_21", age: 28, city: "Bakı", district: "Yasamal", gender: "male", description: "Sakit və xoş söhbətli insan", online: true, lastSeen: "6 dəq əvvəl", interests: ["kitab", "çay", "fəlsəfə"], avatar: "", status: "📚" },
+  { id: 12, username: "gunay_04", age: 20, city: "Gəncə", district: "Nizami", gender: "female", description: "Tələbə, yeni dostlar axtarıram", online: true, lastSeen: "3 dəq əvvəl", interests: ["gəzinti", "kafe", "müzik"], avatar: "", status: "☕" },
+];
